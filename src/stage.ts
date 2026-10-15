@@ -17,6 +17,7 @@ import {
   LEVELS,
   LEVEL_SIGMA,
   LUMA_FLOOR,
+  PEAK_LUMA_FLOOR,
   REF_LONG_EDGE,
   SIGMA_MIN,
   SIGMA_RANGE,
@@ -114,7 +115,9 @@ float cov = maskOn > 0.5 ? mask(srcUv) : 1.0;
 float ca = clamp(amount, 0.0, 100.0) / 100.0 * cov;
 float la = clamp(luminance, 0.0, 100.0) / 100.0 * cov;
 if (ca > 0.0005 || la > 0.0005) {
-  float L0 = max(luma(lin), 1e-6);
+  // Signed lin (RAW outside sRGB) can have luma near or below zero: floor it at
+  // the share of the peak channel any non-negative colour keeps (no-op there).
+  float L0 = max(luma(lin), max(1e-6, ${f(PEAK_LUMA_FLOOR)} * max(abs(lin.r), max(abs(lin.g), abs(lin.b)))));
   float Ls = max(luma(stageResult), 1e-6);
   lin = mix(lin / L0, stageResult / Ls, ca) * mix(L0, Ls, la);
 }`;

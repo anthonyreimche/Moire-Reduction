@@ -23,6 +23,11 @@ export const CHROMA_SIGMA_SCALE = 1.5;
 /** σ (in base strides) of the four cascaded B3 levels at dilations 1, 2, 4, 8. */
 export const LEVEL_SIGMA = Math.sqrt(1 + 4 + 16 + 64);
 export const LUMA_FLOOR = 1e-4;
+/** A colour with no channel below black has luma ≥ 0.0722 × its peak channel
+ *  (the blue weight). The blend floors its luma at this share of the peak |channel|
+ *  so a signed colour (a RAW decode outside sRGB, luma near or below zero) keeps
+ *  its luma-normalised ratio as bounded as an in-gamut one; a no-op for the rest. */
+export const PEAK_LUMA_FLOOR = 0.07;
 
 export const B3 = [1 / 16, 4 / 16, 6 / 16, 4 / 16, 1 / 16] as const;
 export const LUMA_WEIGHTS = [0.2126, 0.7152, 0.0722] as const;
@@ -164,7 +169,8 @@ export function applyMoire(
       const la = la0 * cov;
       if (ca <= 0.0005 && la <= 0.0005) continue;
       const o = (y * width + x) * 3;
-      const L0 = Math.max(luma(data[o], data[o + 1], data[o + 2]), 1e-6);
+      const peak = Math.max(Math.abs(data[o]), Math.abs(data[o + 1]), Math.abs(data[o + 2]));
+      const L0 = Math.max(luma(data[o], data[o + 1], data[o + 2]), 1e-6, PEAK_LUMA_FLOOR * peak);
       const Ls = Math.max(luma(smooth.data[o], smooth.data[o + 1], smooth.data[o + 2]), 1e-6);
       const L = L0 + (Ls - L0) * la;
       for (let ch = 0; ch < 3; ch++) {

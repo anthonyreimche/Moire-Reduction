@@ -8,8 +8,11 @@ import { buildStage, PARAM } from "@moire/stage";
 import { applyMoire, type RgbImage } from "@moire/filter";
 import { bandAmplitude, makeScene, type Span } from "@moire-test/scene";
 import type { WebGLRenderer } from "@/rendering/webgl/renderer";
+import type { ResolvedPipeline } from "@/extensions/pipelines";
 import {
   LINEAR_PROBE_PIPELINE,
+  NEGATING_PIPELINE,
+  type FloatImage,
   type Frame,
   floatImage,
   identityParams,
@@ -34,11 +37,15 @@ const STRONG = {
 const TOP: Span = [8, 120];
 const COLS: Span = [64, 960];
 
-function frame(bag: Record<string, unknown> | null): Frame {
+function frame(
+  bag: Record<string, unknown> | null,
+  source: FloatImage = SOURCE,
+  pipeline: ResolvedPipeline = LINEAR_PROBE_PIPELINE,
+): Frame {
   return withRenderer(
-    { stages: bag ? [STAGE] : [], pipeline: LINEAR_PROBE_PIPELINE },
+    { stages: bag ? [STAGE] : [], pipeline },
     (renderer: WebGLRenderer) => {
-      renderer.setImage(SOURCE);
+      renderer.setImage(source);
       renderer.setParams(identityParams());
       if (bag) renderer.setContributedParams(bag);
       const f = renderer.captureFloatFrame();
@@ -106,4 +113,26 @@ describe("moiré reduction on the GPU", () => {
     }
     expect(changed).toBeGreaterThan(0);
   });
+
+  // A RAW decode keeps colours outside sRGB as negative channels; this deep
+  // blue (ACES AP0 (0, 0, 0.1) in linear sRGB) has a luma below zero. Smoothing
+  // the luminance of a flat field of it has nothing to smooth: the linear probe
+  // reads its blue, the negating transform its below-black red and green.
+  const DEEP_BLUE = floatImage(16, 16, () => [-0.0388, -0.0096, 0.1168]);
+  for (const pipeline of [LINEAR_PROBE_PIPELINE, NEGATING_PIPELINE]) {
+    it(`leaves a flat below-black deep blue as decoded at Luminance 100 (${pipeline.id})`, () => {
+      const plain = frame(null, DEEP_BLUE, pipeline);
+      const out = frame({ ...STRONG, [PARAM.amount]: 0, [PARAM.luminance]: 100 }, DEEP_BLUE, pipeline);
+      let maxErr = 0;
+      let probed = 0;
+      for (let i = 0; i < out.data.length; i++) {
+        if (i % 4 === 3) continue;
+        expect(Number.isFinite(out.data[i])).toBe(true);
+        maxErr = Math.max(maxErr, Math.abs(out.data[i] - plain.data[i]));
+        probed = Math.max(probed, plain.data[i]);
+      }
+      expect(probed).toBeGreaterThan(0.02);
+      expect(maxErr).toBeLessThan(0.01);
+    });
+  }
 });

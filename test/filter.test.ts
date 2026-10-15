@@ -90,4 +90,16 @@ describe("blend", () => {
       expect(half.data[i]).toBeCloseTo((scene.data[i] + full.data[i]) / 2, 6);
     }
   });
+
+  // A RAW decode keeps colours outside sRGB as negative channels; this deep
+  // blue (ACES AP0 (0, 0, 0.1) in linear sRGB) has a luma below zero. Smoothing
+  // the luminance of a flat field of it has nothing to smooth.
+  it("leaves a flat below-black deep blue as decoded at Luminance 100", () => {
+    const blue = [-0.0388, -0.0096, 0.1168];
+    const field = { width: 16, height: 16, data: Float32Array.from({ length: 16 * 16 * 3 }, (_, i) => blue[i % 3]) };
+    const out = applyMoire(field, { ...base, luminance: 100 }, REF_LONG_EDGE);
+    let maxErr = 0;
+    for (let i = 0; i < out.data.length; i++) maxErr = Math.max(maxErr, Math.abs(out.data[i] - field.data[i]));
+    expect(maxErr).toBeLessThan(0.01);
+  });
 });

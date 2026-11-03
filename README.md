@@ -37,6 +37,11 @@ the false colour but stops at object boundaries — and recombines. The inline
 blend mixes original and smoothed chroma (Amount) and luminance (Luminance)
 independently, scaled by the painted coverage.
 
+Colours outside sRGB (negative channels in a RAW decode) and values past white
+keep their range: the luminance that steers the smoothing is measured on the
+colour clipped at black, but the chroma it smooths keeps its sign, so a flat
+patch comes back as it went in at any Amount.
+
 ## Requirements
 
 Safelight 2.5.5 or newer (painted coverage textures for extension stages).

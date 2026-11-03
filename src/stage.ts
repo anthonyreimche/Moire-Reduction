@@ -3,6 +3,9 @@
 // "decode" phase so it injects at the noise-reduction marker — the tonal space
 // the prepass framework produces — without triggering the rule that hands the
 // whole noise-reduction phase to an extension (which would switch core NR off).
+// Photos on process version 1 keep 1.0.0's maths, which clipped the prepass
+// samples below black and floored the blend's luma at 1e-6 alone
+// (SL_PROCESS_VERSION picks the path; filter.ts models both).
 //
 // Identifier rules: uniform and texture keys are rewritten into the stage's
 // namespace by whole-identifier replace, so the GLSL below uses `pattern`,
@@ -87,16 +90,22 @@ export const PASS_GLSL = `
   float stride = sigmaRef * anchor / ${f(LEVEL_SIGMA)} * exp2(float(uPassIndex));
   float sL = ${f(EDGE_SIGMA_MAX)} * pow(${f(EDGE_SIGMA_RATIO)}, clamp(edge, 0.0, 100.0) / 100.0);
   float sC = ${f(CHROMA_SIGMA_SCALE)} * sL;
-  vec3 ctr = max(c, 0.0);
-  float Lc = max(luma(ctr), ${f(LUMA_FLOOR)});
+  float Lc = max(luma(max(c, 0.0)), ${f(LUMA_FLOOR)});
   float accL = 0.0;
   float wL = 0.0;
   vec3 accR = vec3(0.0);
   float wC = 0.0;
   for (int dy = -2; dy <= 2; dy++) {
     for (int dx = -2; dx <= 2; dx++) {
+#if SL_PROCESS_VERSION >= 2
+      vec3 s = readPrev(vUv + vec2(float(dx), float(dy)) * stride * uTexel);
+      // Clipped for the luma alone, which the log weights need positive; the
+      // ratio keeps the sign, so colours outside sRGB survive the smoothing.
+      float Ls = max(luma(max(s, 0.0)), ${f(LUMA_FLOOR)});
+#else
       vec3 s = max(readPrev(vUv + vec2(float(dx), float(dy)) * stride * uTexel), 0.0);
       float Ls = max(luma(s), ${f(LUMA_FLOOR)});
+#endif
       float sp = b3w(dx) * b3w(dy);
       float dl = log(Ls / Lc);
       float eL = exp(-(dl * dl) / (sL * sL));
@@ -115,10 +124,16 @@ float cov = maskOn > 0.5 ? mask(srcUv) : 1.0;
 float ca = clamp(amount, 0.0, 100.0) / 100.0 * cov;
 float la = clamp(luminance, 0.0, 100.0) / 100.0 * cov;
 if (ca > 0.0005 || la > 0.0005) {
-  // Signed lin (RAW outside sRGB) can have luma near or below zero: floor it at
-  // the share of the peak channel any non-negative colour keeps (no-op there).
+#if SL_PROCESS_VERSION >= 2
+  // Signed lin (RAW outside sRGB), and the smoothed colour carrying it, can
+  // have luma near or below zero: floor both at the share of the peak channel
+  // any non-negative colour keeps (no-op there).
   float L0 = max(luma(lin), max(1e-6, ${f(PEAK_LUMA_FLOOR)} * max(abs(lin.r), max(abs(lin.g), abs(lin.b)))));
+  float Ls = max(luma(stageResult), max(1e-6, ${f(PEAK_LUMA_FLOOR)} * max(abs(stageResult.r), max(abs(stageResult.g), abs(stageResult.b)))));
+#else
+  float L0 = max(luma(lin), 1e-6);
   float Ls = max(luma(stageResult), 1e-6);
+#endif
   lin = mix(lin / L0, stageResult / Ls, ca) * mix(L0, Ls, la);
 }`;
 

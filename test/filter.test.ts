@@ -102,4 +102,57 @@ describe("blend", () => {
     for (let i = 0; i < out.data.length; i++) maxErr = Math.max(maxErr, Math.abs(out.data[i] - field.data[i]));
     expect(maxErr).toBeLessThan(0.01);
   });
+
+  // Painting Amount 100 over a flat colour has no false colour to remove, so
+  // colours outside sRGB (negative channels) and past white come back as
+  // they went in.
+  const flat = (rgb: readonly number[]) => ({
+    width: 16,
+    height: 16,
+    data: Float32Array.from({ length: 16 * 16 * 3 }, (_, i) => rgb[i % 3]),
+  });
+  for (const rgb of [
+    [-0.0388, -0.0096, 0.1168],
+    [1.4, -0.1, 0.2],
+    [-0.2, 0.6, -0.05],
+  ]) {
+    it(`leaves a flat (${rgb.join(", ")}) as decoded at Amount 100`, () => {
+      const field = flat(rgb);
+      const out = applyMoire(field, { ...base, amount: 100 }, REF_LONG_EDGE);
+      let maxErr = 0;
+      for (let i = 0; i < out.data.length; i++) maxErr = Math.max(maxErr, Math.abs(out.data[i] - field.data[i]));
+      expect(maxErr).toBeLessThan(1e-5);
+    });
+  }
+
+  // Process version 1 photos keep 1.0.0's maths: the prepass clipped every
+  // sample below black and the blend floored the luma at 1e-6 alone.
+  it("on process version 1 clips the smoothed colour below black at Amount 100", () => {
+    const out = applyMoire(flat([1.4, -0.1, 0.2]), { ...base, amount: 100 }, REF_LONG_EDGE, undefined, 1);
+    const L0 = 1.4 * 0.2126 - 0.1 * 0.7152 + 0.2 * 0.0722;
+    const Ls = 1.4 * 0.2126 + 0.2 * 0.0722;
+    expect(out.data[0]).toBeCloseTo((1.4 / Ls) * L0, 5);
+    expect(out.data[1]).toBe(0);
+    expect(out.data[2]).toBeCloseTo((0.2 / Ls) * L0, 5);
+  });
+
+  it("on process version 1 divides by the 1e-6 floor where the luma is below zero", () => {
+    const blue = [-0.0388, -0.0096, 0.1168];
+    const out = applyMoire(flat(blue), { ...base, luminance: 100 }, REF_LONG_EDGE, undefined, 1);
+    const Ls = 0.1168 * 0.0722;
+    for (let ch = 0; ch < 3; ch++) expect(out.data[ch] / ((blue[ch] / 1e-6) * Ls)).toBeCloseTo(1, 4);
+  });
+
+  it("matches version 2 on process version 1 where no channel is below black", () => {
+    const v1 = applyMoire(scene, { ...base, amount: 100, luminance: 60 }, REF_LONG_EDGE, undefined, 1);
+    const v2 = applyMoire(scene, { ...base, amount: 100, luminance: 60 }, REF_LONG_EDGE);
+    expect(v1.data).toEqual(v2.data);
+  });
+
+  it("still removes the colour bands of a scene shifted below black", () => {
+    const shifted = { ...scene, data: scene.data.map((v, i) => (i % 3 === 2 ? v - 0.5 : v)) };
+    const out = applyMoire(shifted, { ...base, amount: 100 }, REF_LONG_EDGE);
+    for (const v of out.data) expect(Number.isFinite(v)).toBe(true);
+    expect(bandAmplitude(out, TOP, COLS) / bandAmplitude(shifted, TOP, COLS)).toBeLessThan(0.2);
+  });
 });

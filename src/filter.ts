@@ -24,9 +24,10 @@ export const CHROMA_SIGMA_SCALE = 1.5;
 export const LEVEL_SIGMA = Math.sqrt(1 + 4 + 16 + 64);
 export const LUMA_FLOOR = 1e-4;
 /** A colour with no channel below black has luma ≥ 0.0722 × its peak channel
- *  (the blue weight). The blend floors its luma at this share of the peak |channel|
- *  so a signed colour (a RAW decode outside sRGB, luma near or below zero) keeps
- *  its luma-normalised ratio as bounded as an in-gamut one; a no-op for the rest. */
+ *  (the blue weight). The blend floors the original's and the smoothed colour's
+ *  luma at this share of the peak |channel| so a signed colour (a RAW decode
+ *  outside sRGB, luma near or below zero) keeps its luma-normalised ratio as
+ *  bounded as an in-gamut one; a no-op for the rest. */
 export const PEAK_LUMA_FLOOR = 0.07;
 
 export const B3 = [1 / 16, 4 / 16, 6 / 16, 4 / 16, 1 / 16] as const;
@@ -90,8 +91,15 @@ function bilinear(img: RgbImage, fx: number, fy: number, out: Float32Array): voi
   }
 }
 
-/** One à trous iteration at texel dilation `stride`. */
-export function smoothPass(src: RgbImage, stride: number, sigmaL: number, sigmaC: number): RgbImage {
+/** One à trous iteration at texel dilation `stride`. Process version 1 clips
+ *  each sample below black, ratio included, as 1.0.0 did. */
+export function smoothPass(
+  src: RgbImage,
+  stride: number,
+  sigmaL: number,
+  sigmaC: number,
+  processVersion = 2,
+): RgbImage {
   const { width, height, data } = src;
   const out = new Float32Array(data.length);
   const s = new Float32Array(3);
@@ -111,19 +119,17 @@ export function smoothPass(src: RgbImage, stride: number, sigmaL: number, sigmaC
       for (let dy = -2; dy <= 2; dy++) {
         for (let dx = -2; dx <= 2; dx++) {
           bilinear(src, x + dx * stride, y + dy * stride, s);
-          const r = Math.max(s[0], 0);
-          const g = Math.max(s[1], 0);
-          const b = Math.max(s[2], 0);
-          const Ls = Math.max(luma(r, g, b), LUMA_FLOOR);
+          if (processVersion < 2) for (let ch = 0; ch < 3; ch++) s[ch] = Math.max(s[ch], 0);
+          const Ls = Math.max(luma(Math.max(s[0], 0), Math.max(s[1], 0), Math.max(s[2], 0)), LUMA_FLOOR);
           const sp = B3[dx + 2] * B3[dy + 2];
           const dl = Math.log(Ls / Lc);
           const eL = Math.exp(-(dl * dl) / (sigmaL * sigmaL));
           const eC = Math.exp(-(dl * dl) / (sigmaC * sigmaC));
           accL += Ls * sp * eL;
           wL += sp * eL;
-          accR0 += (r / Ls) * sp * eC;
-          accR1 += (g / Ls) * sp * eC;
-          accR2 += (b / Ls) * sp * eC;
+          accR0 += (s[0] / Ls) * sp * eC;
+          accR1 += (s[1] / Ls) * sp * eC;
+          accR2 += (s[2] / Ls) * sp * eC;
           wC += sp * eC;
         }
       }
@@ -137,30 +143,40 @@ export function smoothPass(src: RgbImage, stride: number, sigmaL: number, sigmaC
 }
 
 /** The full prepass chain: LEVELS iterations at doubling strides. */
-export function prepass(src: RgbImage, params: FilterParams, longEdge: number): RgbImage {
+export function prepass(src: RgbImage, params: FilterParams, longEdge: number, processVersion = 2): RgbImage {
   const stride = baseStride(params.pattern, longEdge);
   const sL = lumaSigma(params.edge);
   const sC = chromaSigma(params.edge);
   let cur = src;
   for (let level = 0; level < LEVELS; level++) {
-    cur = smoothPass(cur, stride * 2 ** level, sL, sC);
+    cur = smoothPass(cur, stride * 2 ** level, sL, sC, processVersion);
   }
   return cur;
 }
 
+/** The blend's luma of the colour at `o`, floored at PEAK_LUMA_FLOOR of its
+ *  peak |channel|; at 1e-6 alone on process version 1, as 1.0.0 did. */
+function flooredLuma(data: Float32Array, o: number, processVersion: number): number {
+  if (processVersion < 2) return Math.max(luma(data[o], data[o + 1], data[o + 2]), 1e-6);
+  const peak = Math.max(Math.abs(data[o]), Math.abs(data[o + 1]), Math.abs(data[o + 2]));
+  return Math.max(luma(data[o], data[o + 1], data[o + 2]), 1e-6, PEAK_LUMA_FLOOR * peak);
+}
+
 /** Prepass + inline blend. `coverage(x, y)` is the painted mask (1 = whole
- *  image when absent), sampled at pixel coordinates. */
+ *  image when absent), sampled at pixel coordinates. `processVersion` is the
+ *  photo's: version 1 keeps 1.0.0's clipping maths. */
 export function applyMoire(
   src: RgbImage,
   params: FilterParams,
   longEdge: number,
   coverage?: (x: number, y: number) => number,
+  processVersion = 2,
 ): RgbImage {
   const ca0 = clamp01(params.amount / 100);
   const la0 = clamp01(params.luminance / 100);
   const out = new Float32Array(src.data);
   if (ca0 <= 0 && la0 <= 0) return { width: src.width, height: src.height, data: out };
-  const smooth = prepass(src, params, longEdge);
+  const smooth = prepass(src, params, longEdge, processVersion);
   const { width, height, data } = src;
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
@@ -169,9 +185,8 @@ export function applyMoire(
       const la = la0 * cov;
       if (ca <= 0.0005 && la <= 0.0005) continue;
       const o = (y * width + x) * 3;
-      const peak = Math.max(Math.abs(data[o]), Math.abs(data[o + 1]), Math.abs(data[o + 2]));
-      const L0 = Math.max(luma(data[o], data[o + 1], data[o + 2]), 1e-6, PEAK_LUMA_FLOOR * peak);
-      const Ls = Math.max(luma(smooth.data[o], smooth.data[o + 1], smooth.data[o + 2]), 1e-6);
+      const L0 = flooredLuma(data, o, processVersion);
+      const Ls = flooredLuma(smooth.data, o, processVersion);
       const L = L0 + (Ls - L0) * la;
       for (let ch = 0; ch < 3; ch++) {
         const r0 = data[o + ch] / L0;

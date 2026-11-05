@@ -1,7 +1,7 @@
 {
   "name": "safelight-moire-reduction",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Moiré Reduction extension for Safelight — colour and luminance moiré reduction with an optional painted mask.",
   "type": "module",
   "scripts": {

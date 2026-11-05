@@ -7,7 +7,8 @@
 // iteration splits the previous result into luminance L and chroma ratio c/L,
 // smooths L with the Edge-protection threshold and the ratio with a looser one
 // (so chroma crosses the fine weave edges that carry false colour but stops at
-// object boundaries), and recombines. The blend mixes original and smoothed
+// object boundaries), each sample's ratio weighed by its luma squared, and
+// recombines. The blend mixes original and smoothed
 // ratio (Amount) and luminance (Luminance) independently, scaled by coverage.
 
 export const REF_LONG_EDGE = 4096;
@@ -26,7 +27,7 @@ export const LUMA_FLOOR = 1e-4;
 /** A colour with no channel below black has luma ≥ 0.0722 × its peak channel
  *  (the blue weight). The blend floors the original's and the smoothed colour's
  *  luma at this share of the peak |channel| so a signed colour (a RAW decode
- *  outside sRGB, luma near or below zero) keeps its luma-normalised ratio as
+ *  outside sRGB, luma near or below zero) keeps its luma-normalized ratio as
  *  bounded as an in-gamut one; a no-op for the rest. */
 export const PEAK_LUMA_FLOOR = 0.07;
 
@@ -91,8 +92,11 @@ function bilinear(img: RgbImage, fx: number, fy: number, out: Float32Array): voi
   }
 }
 
-/** One à trous iteration at texel dilation `stride`. Process version 1 clips
- *  each sample below black, ratio included, as 1.0.0 did. */
+/** One à trous iteration at texel dilation `stride`. Version 2 averages the
+ *  chroma ratio weighted by each sample's luma squared, so a dark sample whose
+ *  signed colour makes a large ratio over its floored luma adds only as much
+ *  colour as it has light. Process version 1 clips each sample below black,
+ *  ratio included, and averages the ratio with plain weights, as 1.0.0 did. */
 export function smoothPass(
   src: RgbImage,
   stride: number,
@@ -127,10 +131,18 @@ export function smoothPass(
           const eC = Math.exp(-(dl * dl) / (sigmaC * sigmaC));
           accL += Ls * sp * eL;
           wL += sp * eL;
-          accR0 += (s[0] / Ls) * sp * eC;
-          accR1 += (s[1] / Ls) * sp * eC;
-          accR2 += (s[2] / Ls) * sp * eC;
-          wC += sp * eC;
+          if (processVersion < 2) {
+            accR0 += (s[0] / Ls) * sp * eC;
+            accR1 += (s[1] / Ls) * sp * eC;
+            accR2 += (s[2] / Ls) * sp * eC;
+            wC += sp * eC;
+          } else {
+            const wS = Ls * sp * eC;
+            accR0 += s[0] * wS;
+            accR1 += s[1] * wS;
+            accR2 += s[2] * wS;
+            wC += Ls * wS;
+          }
         }
       }
       const Lp = accL / wL;

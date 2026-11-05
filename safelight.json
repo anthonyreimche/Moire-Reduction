@@ -1,12 +1,12 @@
 {
   "id": "moire-reduction",
   "name": "Moiré Reduction",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "3.2.0",
   "description": "Reduce colour and luminance moiré on fabric, screens and fine patterns — Amount, Luminance, Pattern and Edge protection sliders, plus a brush to confine the reduction to a painted area.",
   "author": "Anthony Reimche",
   "main": "dist/index.js",
   "categories": ["Develop", "Detail"],
-  "keywords": ["safelight-extension", "moire", "moiré", "aliasing", "false-color", "fabric", "brush", "mask"],
+  "keywords": ["safelight-extension", "moire", "moiré", "aliasing", "false-color", "false-colour", "fabric", "brush", "mask"],
   "license": "MIT"
 }

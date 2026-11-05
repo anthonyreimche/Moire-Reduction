@@ -63,6 +63,6 @@ optional browser peers; nothing in the extension depends on peers.
 Install the folder through Safelight's Extensions store or your dev plugins
 folder.
 
-## License
+## Licence
 
 MIT

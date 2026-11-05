@@ -4,8 +4,9 @@
 // the prepass framework produces — without triggering the rule that hands the
 // whole noise-reduction phase to an extension (which would switch core NR off).
 // Photos on process version 1 keep 1.0.0's maths, which clipped the prepass
-// samples below black and floored the blend's luma at 1e-6 alone
-// (SL_PROCESS_VERSION picks the path; filter.ts models both).
+// samples below black, averaged the chroma ratio with plain weights and floored
+// the blend's luma at 1e-6 alone (SL_PROCESS_VERSION picks the path; filter.ts
+// models both).
 //
 // Identifier rules: uniform and texture keys are rewritten into the stage's
 // namespace by whole-identifier replace, so the GLSL below uses `pattern`,
@@ -112,8 +113,17 @@ export const PASS_GLSL = `
       float eC = exp(-(dl * dl) / (sC * sC));
       accL += Ls * sp * eL;
       wL += sp * eL;
+#if SL_PROCESS_VERSION >= 2
+      // The ratio averages by the luma squared, so each colour counts by its
+      // own light: a dark signed colour over its floored luma is a ratio many
+      // times a grey's, and at a plain weight would tint its brighter neighbours.
+      float wS = Ls * sp * eC;
+      accR += s * wS;
+      wC += Ls * wS;
+#else
       accR += (s / Ls) * sp * eC;
       wC += sp * eC;
+#endif
     }
   }
   c = (accR / wC) * (accL / wL);

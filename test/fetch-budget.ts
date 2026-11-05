@@ -1,6 +1,6 @@
 // Static per-pixel texture-fetch count of a prepass program: loops with literal
 // bounds multiply the fetches inside them, helper calls are expanded, every
-// branch is counted (an upper bound), and a loop form the analyser does not
+// branch is counted (an upper bound), and a loop form the analyzer does not
 // understand throws instead of being skipped. Correctness tests on a CPU
 // transcription say nothing about what the GPU executes per draw, and per-draw
 // cost is what hang watchdogs act on.
@@ -49,7 +49,7 @@ function functionFetches(name: string, fns: Map<string, string>, memo: Memo): nu
 
 function flatFetches(text: string, fns: Map<string, string>, memo: Memo): number {
   if (/\b(for|while|do)\b/.test(text)) {
-    throw new Error(`unrecognised loop form: ${text.trim().slice(0, 80)}`);
+    throw new Error(`unrecognized loop form: ${text.trim().slice(0, 80)}`);
   }
   let n = (text.match(/\b(?:texture|readPrev)\s*\(/g) ?? []).length;
   for (const name of fns.keys()) {

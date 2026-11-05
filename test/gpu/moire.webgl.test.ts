@@ -20,6 +20,7 @@ import {
   floatImage,
   identityParams,
   rendererBuildError,
+  toHalf,
   withRenderer,
 } from "@/rendering/webgl/webgl.test-support";
 
@@ -238,5 +239,75 @@ describe("moiré reduction on the GPU", () => {
       if (version === 1) expect(least).toBeGreaterThan(0.1);
       else expect(most).toBeLessThan(2e-3);
     }
+  });
+
+  // Version 2 averages the chroma ratio by the luma squared. Read at the scene
+  // point, the signed working colour the display transform receives.
+  const sceneFrame = (bag: Record<string, unknown>, source: FloatImage): Frame =>
+    withRenderer({ stages: [STAGE], pipeline: OPEN_PROBE }, (renderer) => {
+      renderer.setImage(source);
+      renderer.setParams(identityParams({ processVersion: CURRENT_PROCESS_VERSION }));
+      renderer.setContributedParams(bag);
+      const f = renderer.readFloatFrame("scene");
+      if (!f) throw new Error("readFloatFrame returned null");
+      return f;
+    });
+
+  it("matches the CPU reference and removes the colour bands on version 2", () => {
+    const gpu = toRgb(sceneFrame(STRONG, SOURCE));
+    const cpu = applyMoire(scene, { amount: 100, luminance: 0, pattern: 100, edge: 50 }, W);
+    let maxErr = 0;
+    for (let y = TOP[0]; y < TOP[1]; y++) {
+      for (let x = COLS[0]; x < COLS[1]; x++) {
+        const o = (y * W + x) * 3;
+        for (let ch = 0; ch < 3; ch++) {
+          maxErr = Math.max(maxErr, Math.abs(gpu.data[o + ch] - cpu.data[o + ch]));
+        }
+      }
+    }
+    const residual = bandAmplitude(gpu, TOP, COLS) / bandAmplitude(scene, TOP, COLS);
+    console.log(`[moire-gpu] v2 scene: max error ${maxErr.toExponential(2)}, band residual ${residual.toFixed(4)}`);
+    expect(maxErr).toBeLessThan(0.02);
+    expect(residual).toBeLessThan(0.25);
+  });
+
+  // A dark pixel whose signed colour has almost no light, (−0.002, −0.001,
+  // 0.0005), is a ratio of (−20, −10, 5) over its floored luma; in a
+  // checkerboard with a grey of the same magnitude it must not tint the grey.
+  it("keeps a grey beside dark, strongly coloured pixels grey on version 2", () => {
+    const BW = 1024;
+    const BH = 16;
+    const GREY = 0.002;
+    const DARK: [number, number, number] = [-0.002, -0.001, 0.0005];
+    const isGrey = (x: number, y: number) => (x + y) % 2 === 0;
+    const board = floatImage(BW, BH, (x, y) => (isGrey(x, y) ? [GREY, GREY, GREY] : DARK));
+    const gpu = sceneFrame({ ...STRONG, [PARAM.pattern]: 50, [PARAM.edge]: 0 }, board);
+    const cpu = applyMoire(
+      {
+        width: BW,
+        height: BH,
+        data: Float32Array.from({ length: BW * BH * 3 }, (_, i) => {
+          const p = Math.floor(i / 3);
+          return toHalf(isGrey(p % BW, Math.floor(p / BW)) ? GREY : DARK[i % 3]);
+        }),
+      },
+      { amount: 100, luminance: 0, pattern: 50, edge: 0 },
+      BW,
+    );
+    let worst = 0;
+    let maxErr = 0;
+    for (let y = 0; y < BH; y++) {
+      for (let x = 64; x < BW - 64; x++) {
+        if (!isGrey(x, y)) continue;
+        for (let ch = 0; ch < 3; ch++) {
+          const v = gpu.data[(y * BW + x) * 4 + ch];
+          worst = Math.max(worst, Math.abs(v - GREY));
+          maxErr = Math.max(maxErr, Math.abs(v - cpu.data[(y * BW + x) * 3 + ch]));
+        }
+      }
+    }
+    console.log(`[moire-gpu] v2 checkerboard: grey moves ${worst.toExponential(2)}, CPU error ${maxErr.toExponential(2)}`);
+    expect(maxErr).toBeLessThan(3e-4);
+    expect(worst).toBeLessThan(2.5e-3);
   });
 });

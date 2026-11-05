@@ -42,6 +42,37 @@ if (ca > 0.0005 || la > 0.0005) {
   lin = mix(lin / L0, stageResult / Ls, ca) * mix(L0, Ls, la);
 }`;
 
+// Moiré Reduction 1.0.0's prepass, which process version 1 photos keep.
+const V1_PASS = `
+{
+  vec2 res = 1.0 / uTexel;
+  float anchor = max(res.x, res.y) / 4096.0;
+  float sigmaRef = 1.5 * pow(16.0, clamp(pattern, 0.0, 100.0) / 100.0);
+  float stride = sigmaRef * anchor / 9.219544457292887 * exp2(float(uPassIndex));
+  float sL = 1.5 * pow(0.04, clamp(edge, 0.0, 100.0) / 100.0);
+  float sC = 1.5 * sL;
+  float Lc = max(luma(max(c, 0.0)), 0.0001);
+  float accL = 0.0;
+  float wL = 0.0;
+  vec3 accR = vec3(0.0);
+  float wC = 0.0;
+  for (int dy = -2; dy <= 2; dy++) {
+    for (int dx = -2; dx <= 2; dx++) {
+      vec3 s = max(readPrev(vUv + vec2(float(dx), float(dy)) * stride * uTexel), 0.0);
+      float Ls = max(luma(s), 0.0001);
+      float sp = b3w(dx) * b3w(dy);
+      float dl = log(Ls / Lc);
+      float eL = exp(-(dl * dl) / (sL * sL));
+      float eC = exp(-(dl * dl) / (sC * sC));
+      accL += Ls * sp * eL;
+      wL += sp * eL;
+      accR += (s / Ls) * sp * eC;
+      wC += sp * eC;
+    }
+  }
+  c = (accR / wC) * (accL / wL);
+}`;
+
 describe("stage contract", () => {
   const stage = buildStage();
 
@@ -82,12 +113,15 @@ describe("stage contract", () => {
     }
   });
 
-  it("clips samples only for the luma and its log weights, and averages the signed ratio", () => {
+  it("clips samples only for the luma and its log weights, and averages the signed ratio by the luma squared", () => {
     const pass = forVersion(PASS_GLSL, 2);
     expect(pass).not.toMatch(/max\(readPrev/);
     expect(pass).toMatch(/vec3 s = readPrev\(/);
     expect(pass).toMatch(/float Ls = max\(luma\(max\(s, 0\.0\)\), /);
-    expect(pass).toMatch(/accR \+= \(s \/ Ls\) \* sp \* eC;/);
+    expect(pass).toContain("float wS = Ls * sp * eC;");
+    expect(pass).toContain("accR += s * wS;");
+    expect(pass).toContain("wC += Ls * wS;");
+    expect(pass).not.toContain("s / Ls");
   });
 
   it("floors the smoothed colour's luma at the share of its peak channel, as the original's", () => {
@@ -103,6 +137,7 @@ describe("stage contract", () => {
     expect(pass).toContain("vec3 s = max(readPrev(vUv + vec2(float(dx), float(dy)) * stride * uTexel), 0.0);");
     expect(pass).toContain(`float Ls = max(luma(s), ${LUMA_FLOOR});`);
     expect(pass).not.toMatch(/luma\(max\(s, 0\.0\)\)/);
+    expect(pass).toBe(V1_PASS);
     expect(forVersion(INLINE_GLSL, 1)).toBe(V1_INLINE);
   });
 

@@ -143,10 +143,19 @@ describe("blend", () => {
     for (let ch = 0; ch < 3; ch++) expect(out.data[ch] / ((blue[ch] / 1e-6) * Ls)).toBeCloseTo(1, 4);
   });
 
-  it("matches version 2 on process version 1 where no channel is below black", () => {
-    const v1 = applyMoire(scene, { ...base, amount: 100, luminance: 60 }, REF_LONG_EDGE, undefined, 1);
-    const v2 = applyMoire(scene, { ...base, amount: 100, luminance: 60 }, REF_LONG_EDGE);
-    expect(v1.data).toEqual(v2.data);
+  // Where no channel is below black, version 1 is the plain ratio average the
+  // version 2 smoothing replaced; the moiré scene must lose its bands as well.
+  it("removes the colour bands of the moiré scene as well as process version 1 does", () => {
+    for (const pattern of [20, 40, 60, 75, 80]) {
+      const params = { ...base, amount: 100, pattern };
+      const v1 = applyMoire(scene, params, REF_LONG_EDGE, undefined, 1);
+      const v2 = applyMoire(scene, params, REF_LONG_EDGE);
+      for (const rows of [TOP, BOTTOM]) {
+        const residual = (img: typeof scene) => bandAmplitude(img, rows, COLS) / bandAmplitude(scene, rows, COLS);
+        expect(Math.abs(residual(v2) - residual(v1))).toBeLessThan(0.005);
+      }
+      expect(stripeAmplitude(v2, TOP, COLS) / stripeAmplitude(scene, TOP, COLS)).toBeGreaterThan(0.95);
+    }
   });
 
   it("still removes the colour bands of a scene shifted below black", () => {
@@ -154,5 +163,44 @@ describe("blend", () => {
     const out = applyMoire(shifted, { ...base, amount: 100 }, REF_LONG_EDGE);
     for (const v of out.data) expect(Number.isFinite(v)).toBe(true);
     expect(bandAmplitude(out, TOP, COLS) / bandAmplitude(shifted, TOP, COLS)).toBeLessThan(0.2);
+  });
+});
+
+// A RAW's shadows hold pixels whose signed colour carries almost no light:
+// (−0.002, −0.001, 0.0005) has a luma below zero, so over the floored luma its
+// ratio is (−20, −10, 5). Smoothing the chroma of a checkerboard of it and a
+// grey of the same magnitude must not hand that ratio to the grey.
+describe("dark, strongly coloured pixels", () => {
+  const DARK = [-0.002, -0.001, 0.0005];
+  const GREY = 0.002;
+  const N = 16;
+  const board = {
+    width: N,
+    height: N,
+    data: Float32Array.from({ length: N * N * 3 }, (_, i) => {
+      const p = Math.floor(i / 3);
+      return (p % N) % 2 === Math.floor(p / N) % 2 ? GREY : DARK[i % 3];
+    }),
+  };
+  const params = { amount: 100, luminance: 0, pattern: 50, edge: 0 };
+
+  for (const edge of [0, 25, 50]) {
+    it(`leave the grey beside them grey at Edge protection ${edge}`, () => {
+      const out = applyMoire(board, { ...params, edge }, REF_LONG_EDGE);
+      let worst = 0;
+      for (let p = 0; p < N * N; p++) {
+        if ((p % N) % 2 !== Math.floor(p / N) % 2) continue;
+        for (let ch = 0; ch < 3; ch++) worst = Math.max(worst, Math.abs(out.data[p * 3 + ch] - GREY));
+      }
+      expect(worst).toBeLessThan(6e-4);
+    });
+  }
+
+  it("on process version 1 tint the grey slightly blue, as 1.0.0 did", () => {
+    const out = applyMoire(board, params, REF_LONG_EDGE, undefined, 1);
+    const o = ((N / 2) * N + N / 2) * 3;
+    expect(out.data[o]).toBeCloseTo(0.0009037, 6);
+    expect(out.data[o + 1]).toBeCloseTo(0.0018377, 6);
+    expect(out.data[o + 2]).toBeCloseTo(0.0068364, 6);
   });
 });

@@ -1,5 +1,5 @@
 // The Develop panel: the four filter sliders, the mask row, and — while the
-// brush is armed — core's shared brush settings. Sliders write the paramBag by
+// brush is armed — the brush's own settings. Sliders write the paramBag by
 // qualified key and commit on release; Alt/Ctrl-drag previews reuse core's
 // sharpenViz modes (chroma reveal for the colour knobs, luminance for
 // Luminance). Generic controls come from api.ui; text stays selectable.
@@ -21,15 +21,22 @@ export function MoirePanel() {
   const Slider = a.components.Slider;
   const { Button, Toggle, Row, Stack } = a.ui;
   const dev = a.stores.useDevelopStore;
+  const react = a.react;
 
   const armed = store()((s) => s.armed);
   const paramBag = dev((s) => s.paramBag);
-  const brushSize = dev((s) => s.brushSize);
-  const brushFeather = dev((s) => s.brushFeather);
-  const brushOpacity = dev((s) => s.brushOpacity);
-  const brushFlow = dev((s) => s.brushFlow);
-  const brushErase = dev((s) => s.brushErase);
+  const brushSize = store()((s) => s.brushSize);
+  const brushFeather = store()((s) => s.brushFeather);
+  const brushOpacity = store()((s) => s.brushOpacity);
+  const brushFlow = store()((s) => s.brushFlow);
+  const brushErase = store()((s) => s.brushErase);
+  const held = a.develop.useCanvasToolHeld();
   const painted = hasMask(paramBag);
+
+  // Another tool took the canvas (crop, masks, heal): the brush goes off.
+  react.useEffect(() => {
+    if (armed && !held) store().getState().setArmed(false);
+  }, [armed, held]);
 
   const knobRow = (knob: Knob) => {
     const qk = PARAM[knob.key];
@@ -49,8 +56,7 @@ export function MoirePanel() {
     });
   };
 
-  // Brush settings are core's own fields (shared with the mask brush), shown
-  // as percentages like the masking panel does.
+  // Brush settings, shown as percentages like the masking panel does.
   const brushSlider = (
     label: string,
     value: number,
@@ -69,12 +75,12 @@ export function MoirePanel() {
       defaultValue,
       onChange: (v: number) => {
         set(v / 100);
-        dev.getState().setBrushPreview(true);
+        store().getState().setBrushPreview(true);
       },
-      onCommit: () => dev.getState().setBrushPreview(false),
+      onCommit: () => store().getState().setBrushPreview(false),
     });
 
-  const d = dev.getState();
+  const d = store().getState();
   return h(
     Stack,
     { gap: 6, style: { padding: "6px 8px 8px" } },

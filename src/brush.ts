@@ -10,7 +10,8 @@ export interface Point {
   y: number;
 }
 
-/** Core's shared brush state (develop-store fields). */
+/** The brush a dab is stamped with: size is a radius in image-height units,
+ *  the rest 0 to 1. */
 export interface BrushState {
   brushSize: number;
   brushFeather: number;

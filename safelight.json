@@ -1,7 +1,7 @@
 {
   "id": "moire-reduction",
   "name": "Moiré Reduction",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "minAppVersion": "3.2.0",
   "description": "Reduce colour and luminance moiré on fabric, screens and fine patterns — Amount, Luminance, Pattern and Edge protection sliders, plus a brush to confine the reduction to a painted area.",
   "author": "Anthony Reimche",

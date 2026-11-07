@@ -29,27 +29,11 @@ export type StateCreator<T> = (
   get: () => T,
 ) => T;
 
-export type ToolMode = "none" | "mask" | "retouch" | "hsl-picker";
-
 export interface DevelopStoreState {
   photoId: string | null;
   /** Extension stage params by qualified key. Values are whatever the owning
    *  stage wrote and come back from sidecar JSON — a runtime boundary. */
   paramBag: Record<string, unknown>;
-  cropping: boolean;
-  activeTool: ToolMode;
-  brushSize: number;
-  brushFeather: number;
-  brushOpacity: number;
-  brushFlow: number;
-  brushErase: boolean;
-  brushPreview: boolean;
-  setBrushSize(v: number): void;
-  setBrushFeather(v: number): void;
-  setBrushOpacity(v: number): void;
-  setBrushFlow(v: number): void;
-  setBrushErase(v: boolean): void;
-  setBrushPreview(v: boolean): void;
   setSharpenViz(mode: number): void;
   setDynParam(key: string, value: unknown): void;
   setDynParams(patch: Record<string, unknown>): void;
@@ -131,18 +115,6 @@ export interface ProcessingStageContribution {
   passes?: StagePass[];
   textures?: TextureRequirement[];
   presetScope?: "global" | "per-image";
-}
-
-export interface SlotContribution {
-  id: string;
-  slot:
-    | "develop-canvas-overlay"
-    | "develop-toolbar"
-    | "develop-detail"
-    | "library-toolbar"
-    | "library-subbar";
-  component: ComponentType;
-  order?: number;
 }
 
 export interface PanelContribution {
@@ -231,6 +203,20 @@ export interface UiKit {
   tokens: Readonly<Record<string, string>>;
 }
 
+/** An extension's on-image tool that takes the canvas over while it is held. */
+export interface CanvasTool {
+  overlay: ComponentType<{ rect: OverlayRect }>;
+  /** Whether zoom and pan still reach the canvas under the overlay. */
+  zoomable?: boolean;
+  /** Escape was pressed: core lets the tool go after this. */
+  onEscape?(): void;
+  /** A shortcut's action (keybinding id) pressed while the tool is held:
+   *  whether the tool took it. */
+  onAction?(action: string): boolean;
+  /** Whether the tool would take `action` now, without acting. */
+  wants?(action: string): boolean;
+}
+
 export interface SafelightAPI {
   version: 1;
   extensionId: string;
@@ -238,7 +224,6 @@ export interface SafelightAPI {
   registerProcessingStage(c: ProcessingStageContribution): void;
   unregisterProcessingStage(id: string): void;
   registerPanel(c: PanelContribution): void;
-  registerSlot(c: SlotContribution): void;
   registerKeybinding(c: KeyActionContribution): void;
   components: { Slider: ComponentType<SliderProps> };
   ui: UiKit;
@@ -248,12 +233,16 @@ export interface SafelightAPI {
     useUIStore: StoreApi<UIStoreState>;
     useSettings: StoreApi<AppSettings>;
   };
-  keybindings: { getBinding(actionId: string): string };
   develop: {
     useDevelopOverlay(): DevelopOverlayState;
     setCanvasCursor(
       cursor: string | CursorContribution | null,
       opts?: { priority?: number },
     ): () => void;
+    /** Hold the develop canvas with an on-image tool, or with null let go of
+     *  it. One extension holds it at a time: the last to set it. */
+    setCanvasTool(tool: CanvasTool | null): void;
+    /** React hook: whether this extension holds the canvas tool. */
+    useCanvasToolHeld(): boolean;
   };
 }

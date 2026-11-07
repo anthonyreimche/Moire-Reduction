@@ -1,5 +1,5 @@
-// The interactive layer, mounted into the click-through "develop-canvas-overlay"
-// slot. While the brush is armed it captures the pointer, maps it to source-UV
+// The canvas tool held while the brush is armed (MOIRE_TOOL), so crop, masks
+// and heal never paint at the same time. It captures the pointer, maps it to source-UV
 // through api.develop's overlay helpers (client px → layout px by the
 // Interface-scale zoom → toImage; never offsetX/Y, which break under Windows
 // display scaling), stamps dabs into the paramBag at the masking panel's
@@ -9,8 +9,10 @@
 
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { lineDabs, makeDab, shouldStamp, type BrushState, type Dab, type Point } from "./brush";
+import { brushStep } from "./keys";
 import { appendDabs, readMask } from "./persistence";
 import { api, h } from "./runtime";
+import type { CanvasTool } from "./safelight";
 import { PARAM } from "./stage";
 import { store } from "./store";
 import { paintWash } from "./wash";
@@ -40,13 +42,11 @@ export function MoireOverlay() {
   const react = api().react;
   const dev = api().stores.useDevelopStore;
   const armed = store()((s) => s.armed);
-  const cropping = dev((s) => s.cropping);
-  const activeTool = dev((s) => s.activeTool);
   const photoId = dev((s) => s.photoId);
-  const brushSize = dev((s) => s.brushSize);
-  const brushFeather = dev((s) => s.brushFeather);
-  const brushErase = dev((s) => s.brushErase);
-  const brushPreview = dev((s) => s.brushPreview);
+  const brushSize = store()((s) => s.brushSize);
+  const brushFeather = store()((s) => s.brushFeather);
+  const brushErase = store()((s) => s.brushErase);
+  const brushPreview = store()((s) => s.brushPreview);
   const maskValue = dev((s) => s.paramBag[PARAM.mask]);
   const { rect, imageRect, nonce, toImage, toScreen, radiusToScreen } =
     api().develop.useDevelopOverlay();
@@ -64,8 +64,6 @@ export function MoireOverlay() {
 
   const visible =
     armed &&
-    !cropping &&
-    activeTool === "none" &&
     !!rect &&
     !!photoId &&
     !!toImage &&
@@ -116,7 +114,7 @@ export function MoireOverlay() {
 
   const placeRing = (lx: number, ly: number, show: boolean) => {
     cursor.current = { lx, ly, shown: show };
-    const s = dev.getState();
+    const s = store().getState();
     const px = radiusToScreen ? radiusToScreen(s.brushSize) : 0;
     const place = (el: HTMLDivElement | null, d: number, vis: boolean) => {
       if (!el) return;
@@ -176,7 +174,7 @@ export function MoireOverlay() {
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture(e.pointerId);
-    const brush = brushState(dev.getState());
+    const brush = brushState(store().getState());
     const dabs: Dab[] =
       e.shiftKey && lastPoint.current
         ? lineDabs(lastPoint.current, p, brush, aspect, e.altKey)
@@ -195,7 +193,7 @@ export function MoireOverlay() {
     const s = stroke.current;
     if (!s) return;
     const p = toImage(lx, ly);
-    const brush = brushState(dev.getState());
+    const brush = brushState(store().getState());
     if (!shouldStamp(s.last, p, brush, aspect)) return;
     appendDabs([makeDab(p, brush, e.altKey)]);
     s.last = p;
@@ -265,3 +263,22 @@ export function MoireOverlay() {
       : null,
   );
 }
+
+/** Steps the brush by `action` (one of Develop's brush shortcuts) when `run`;
+ *  whether it is one. */
+function takeAction(action: string, run: boolean): boolean {
+  const patch = brushStep(action, store().getState());
+  if (!patch) return false;
+  if (run) store().setState(patch);
+  return true;
+}
+
+/** The tool held while the brush is armed. Develop's brush shortcuts set the
+ *  brush; Escape disarms. */
+export const MOIRE_TOOL: CanvasTool = {
+  overlay: MoireOverlay,
+  zoomable: true,
+  onEscape: () => store().getState().setArmed(false),
+  onAction: (action) => takeAction(action, true),
+  wants: (action) => takeAction(action, false),
+};

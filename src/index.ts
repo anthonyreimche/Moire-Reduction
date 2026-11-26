@@ -12,7 +12,6 @@ import type { SafelightAPI } from "./safelight";
 import { api, initRuntime } from "./runtime";
 import { initStore, store } from "./store";
 import { buildStage, EXT_ID, STAGE_ID } from "./stage";
-import { inDevelop } from "./keys";
 import { MOIRE_TOOL } from "./Overlay";
 import { MoirePanel } from "./Panel";
 import { resetAll } from "./persistence";
@@ -35,7 +34,7 @@ export function activate(host: SafelightAPI): void {
     category: "Develop",
     defaultCombo: "Shift+M",
     handler: () => {
-      if (inDevelop() && host.stores.useDevelopStore.getState().photoId) {
+      if (host.navigation.current() === "develop" && host.stores.useDevelopStore.getState().photoId) {
         store().getState().toggleArmed();
       }
     },
@@ -46,6 +45,7 @@ export function activate(host: SafelightAPI): void {
     title: "Moiré Reduction",
     component: MoirePanel,
     defaultDock: { module: "develop", direction: "right", order: 8, width: 250 },
+    modules: ["develop"],
     onReset: () => void resetAll(),
   });
 }

@@ -24,12 +24,13 @@ export interface MoireState extends BrushState {
 let instance: StoreApi<MoireState> | null = null;
 
 export function initStore(): StoreApi<MoireState> {
+  const { defaults: brush } = api().develop.brush;
   instance = api().stores.create<MoireState>((set) => ({
     armed: false,
-    brushSize: 0.08,
-    brushFeather: 0.5,
-    brushOpacity: 1,
-    brushFlow: 1,
+    brushSize: brush.size,
+    brushFeather: brush.feather,
+    brushOpacity: brush.opacity,
+    brushFlow: brush.flow,
     brushErase: false,
     brushPreview: false,
     setArmed: (armed) => set({ armed }),

@@ -40,6 +40,8 @@ export interface DevelopStoreState {
   commitEdit(label: string): Promise<void>;
 }
 
+export type ModuleId = 'library' | 'develop' | (string & {});
+
 export interface UIStoreState {
   activeModule: "library" | "develop";
 }
@@ -128,6 +130,8 @@ export interface PanelContribution {
     width?: number;
     height?: number;
   };
+  /** The modules the panel may be docked in; omitted, every module (Safelight 3.2.8). */
+  modules?: readonly string[];
   onReset?: () => void;
 }
 
@@ -227,6 +231,20 @@ export interface SafelightAPI {
   registerKeybinding(c: KeyActionContribution): void;
   components: { Slider: ComponentType<SliderProps> };
   ui: UiKit;
+  /** Cursor vocabulary: `resolve` turns a token id (built-in or one a cursor
+   *  theme has overridden) into a concrete CSS `cursor` value. An unknown token
+   *  is returned as-is. Non-reactive: read it at render. */
+  cursors: {
+    labels: Readonly<Record<string, string>>;
+    resolve(token: string): string;
+  };
+  navigation: {
+    /** The module this window shows: a popped-out window's own module, else
+     *  the main window's tab. Ask it before acting on a Develop shortcut,
+     *  `current() === "develop"`, rather than reading the URL. Needs
+     *  Safelight 3.2.7. */
+    current(): ModuleId;
+  };
   stores: {
     create<T>(init: StateCreator<T>): StoreApi<T>;
     useDevelopStore: StoreApi<DevelopStoreState>;
@@ -244,5 +262,70 @@ export interface SafelightAPI {
     setCanvasTool(tool: CanvasTool | null): void;
     /** React hook: whether this extension holds the canvas tool. */
     useCanvasToolHeld(): boolean;
+    /** The official brush every painting tool shares: Masking's. A tool holds
+     *  its own settings and starts them from `defaults` (size is a radius as a
+     *  share of the photo's height, as a BrushDab's; feather, opacity and flow
+     *  run 0 to 1). `actions` are the rebindable brush shortcuts' keybinding
+     *  ids ([ and ] size, Shift+[ and Shift+] feather, comma and period
+     *  opacity, Shift+comma and Shift+period flow), which core hands only to the
+     *  held canvas tool: answer CanvasTool.onAction and wants with `step`,
+     *  passing the settings the tool has. It returns the setting a shortcut
+     *  changes and its new value, held to its range, or null for one the tool
+     *  doesn't have, which core then leaves alone. Needs Safelight 3.2.7. */
+    brush: {
+      defaults: Readonly<BrushSettings>;
+      actions: readonly string[];
+      step: typeof stepBrush;
+    };
+    /** The official brush ring, for a canvas tool's overlay: the brush's edge
+     *  and its feathered core at `at` (overlay layout px, from framePoint; or
+     *  "centre", the reference a size slider shows while dragged), sized as a
+     *  dab paints in the photo through any crop, zoom or Perspective; red and
+     *  dashed for an erasing brush. It draws around the crosshair cursor, as
+     *  Masking's brush does. Needs Safelight 3.2.7. */
+    BrushCursor: typeof BrushCursor;
+    /** The pointer in `el`'s layout px: the space an overlay's `rect`, the
+     *  mapping helpers and CSS left/top use. Interface scale zooms the page,
+     *  so clientX minus the element's left is off by the zoom. Needs Safelight
+     *  3.2.7. */
+    framePoint(el: Element, clientX: number, clientY: number): {
+      x: number;
+      y: number;
+    };
   };
 }
+
+export interface BrushSettings {
+  size: number;
+  feather: number;
+  opacity: number;
+  flow: number;
+}
+
+export type BrushSetting = keyof BrushSettings;
+
+/** The setting a brush shortcut changes and its value after the step, held to
+ *  its range; null for an action that isn't a brush shortcut, or one for a
+ *  setting `brush` doesn't have, so a tool without flow leaves the flow keys
+ *  alone. A canvas tool answers onAction and wants with it. */
+declare function stepBrush(action: string, brush: Partial<BrushSettings>): {
+  key: BrushSetting;
+  value: number;
+} | null;
+
+export interface BrushCursorProps {
+  /** The pointer in the overlay's layout px (api.develop.framePoint), or
+   *  "centre" for the reference ring a size slider shows; null draws nothing. */
+  at: {
+    x: number;
+    y: number;
+  } | "centre" | null;
+  /** The brush's radius, a share of the photo's height. */
+  size: number;
+  /** 0 to 1: how much of the radius fades. */
+  feather: number;
+  /** An erasing (subtracting) brush, drawn red and dashed. */
+  erase?: boolean;
+}
+
+declare function BrushCursor({ at, size, feather, erase }: BrushCursorProps): import("react").JSX.Element | null;

@@ -8,9 +8,12 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { activate, deactivate } from "../src/index";
 import { store } from "../src/store";
 import type {
+  BrushSetting,
+  BrushSettings,
   CanvasTool,
   DevelopStoreState,
   KeyActionContribution,
+  ModuleId,
   PanelContribution,
   ProcessingStageContribution,
   SafelightAPI,
@@ -39,6 +42,23 @@ function fakeStore<T extends object>(init: StateCreator<T> | T): StoreApi<T> {
   return hook;
 }
 
+// The official brush as the fake hands it out. The defaults differ from the old
+// hard-coded ones so a test sees where a setting started from.
+const BRUSH_DEFAULTS: BrushSettings = { size: 0.12, feather: 0.4, opacity: 0.7, flow: 0.9 };
+
+const BRUSH_STEPS: Record<string, { key: BrushSetting; by: number }> = {
+  "brush.larger": { key: "size", by: 0.01 },
+  "brush.featherUp": { key: "feather", by: 0.05 },
+  "brush.opacityUp": { key: "opacity", by: 0.1 },
+  "brush.flowUp": { key: "flow", by: 0.1 },
+};
+
+function stepBrush(action: string, brush: Partial<BrushSettings>): { key: BrushSetting; value: number } | null {
+  const s = BRUSH_STEPS[action];
+  const now = s ? brush[s.key] : undefined;
+  return s && now !== undefined ? { key: s.key, value: now + s.by } : null;
+}
+
 interface Registered {
   stages: ProcessingStageContribution[];
   panels: PanelContribution[];
@@ -47,12 +67,13 @@ interface Registered {
   tools: (CanvasTool | null)[];
 }
 
-function fakeApi(): { api: SafelightAPI; registered: Registered; develop: StoreApi<DevelopStoreState>; ui: StoreApi<UIStoreState> } {
+function fakeApi(): { api: SafelightAPI; registered: Registered; develop: StoreApi<DevelopStoreState>; nav: { module: ModuleId } } {
   const registered: Registered = { stages: [], panels: [], keys: [], unregistered: [], tools: [] };
   // Only the members activate() touches are populated; the rest of the store
   // surface is irrelevant here, hence the partial cast.
   const develop = fakeStore<DevelopStoreState>({ photoId: null } as Partial<DevelopStoreState> as DevelopStoreState);
   const ui = fakeStore<UIStoreState>({ activeModule: "library" });
+  const nav: { module: ModuleId } = { module: "library" };
   const api = {
     version: 1,
     extensionId: "moire-reduction",
@@ -60,15 +81,18 @@ function fakeApi(): { api: SafelightAPI; registered: Registered; develop: StoreA
     unregisterProcessingStage: (id: string) => void registered.unregistered.push(id),
     registerPanel: (c: PanelContribution) => void registered.panels.push(c),
     registerKeybinding: (c: KeyActionContribution) => void registered.keys.push(c),
+    navigation: { current: () => nav.module },
     stores: { create: fakeStore, useDevelopStore: develop, useUIStore: ui },
-    develop: { setCanvasTool: (t: CanvasTool | null) => void registered.tools.push(t) },
+    develop: {
+      setCanvasTool: (t: CanvasTool | null) => void registered.tools.push(t),
+      brush: { defaults: BRUSH_DEFAULTS, actions: Object.keys(BRUSH_STEPS), step: stepBrush },
+    } as Partial<SafelightAPI["develop"]>,
   } as Partial<SafelightAPI> as SafelightAPI;
-  return { api, registered, develop, ui };
+  return { api, registered, develop, nav };
 }
 
 describe("activate", () => {
   beforeEach(() => {
-    // inDevelop() reads the detached-window query string.
     Object.assign(globalThis, { window: { location: { search: "" } } });
   });
 
@@ -86,15 +110,15 @@ describe("activate", () => {
     expect(registered.keys).toMatchObject([{ id: "moire-reduction.paint", defaultCombo: "Shift+M", category: "Develop" }]);
   });
 
-  it("starts with the brush off and a brush of its own at the masking defaults", () => {
+  it("starts with the brush off and a brush at the official brush's defaults", () => {
     const { api } = fakeApi();
     activate(api);
     expect(store().getState()).toMatchObject({
       armed: false,
-      brushSize: 0.08,
-      brushFeather: 0.5,
-      brushOpacity: 1,
-      brushFlow: 1,
+      brushSize: BRUSH_DEFAULTS.size,
+      brushFeather: BRUSH_DEFAULTS.feather,
+      brushOpacity: BRUSH_DEFAULTS.opacity,
+      brushFlow: BRUSH_DEFAULTS.flow,
       brushErase: false,
       brushPreview: false,
     });
@@ -121,12 +145,12 @@ describe("activate", () => {
   });
 
   it("arms the brush from the shortcut only in Develop with a photo open", () => {
-    const { api, registered, develop, ui } = fakeApi();
+    const { api, registered, develop, nav } = fakeApi();
     activate(api);
     const paint = registered.keys[0];
     paint.handler();
     expect(store().getState().armed).toBe(false);
-    ui.setState({ activeModule: "develop" });
+    nav.module = "develop";
     paint.handler();
     expect(store().getState().armed).toBe(false);
     develop.setState({ photoId: "p1" });
@@ -150,7 +174,13 @@ describe("activate", () => {
     expect(tool?.zoomable).toBe(true);
     expect(tool?.wants?.("brush.larger")).toBe(true);
     expect(tool?.onAction?.("brush.larger")).toBe(true);
-    expect(store().getState().brushSize).toBe(0.09);
+    expect(store().getState().brushSize).toBeCloseTo(BRUSH_DEFAULTS.size + 0.01, 6);
+    expect(tool?.onAction?.("brush.opacityUp")).toBe(true);
+    expect(store().getState().brushOpacity).toBeCloseTo(BRUSH_DEFAULTS.opacity + 0.1, 6);
+    expect(tool?.onAction?.("brush.flowUp")).toBe(true);
+    expect(store().getState().brushFlow).toBeCloseTo(BRUSH_DEFAULTS.flow + 0.1, 6);
+    expect(tool?.onAction?.("brush.featherUp")).toBe(true);
+    expect(store().getState().brushFeather).toBeCloseTo(BRUSH_DEFAULTS.feather + 0.05, 6);
     expect(tool?.wants?.("mask.delete")).toBe(false);
     expect(tool?.onAction?.("mask.delete")).toBe(false);
     tool?.onEscape?.();
